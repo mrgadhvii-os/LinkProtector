@@ -1,14 +1,21 @@
 # Core dependencies
-pyrogram==2.0.106
-tgcrypto==1.2.5  # For better performance with Pyrogram
-aiohttp==3.9.1   # For async HTTP requests
+pyrogram>=2.0.106
+tgcrypto>=1.2.5
+aiohttp>=3.9.1
+
+# Web server
+aiohttp-jinja2>=1.5.1  # For web templates
+gunicorn>=21.2.0      # Production web server
 
 # Time and date handling
-python-dateutil==2.8.2
+python-dateutil>=2.8.2
 
 # Environment and configuration
-python-dotenv==1.0.0  # For loading environment variables
+python-dotenv>=1.0.0  # For loading environment variables
 
 # Utilities
-urllib3==2.1.0    # For URL handling
-certifi==2023.11.17  # Required for HTTPS 
+urllib3>=2.1.0   # For URL handling
+certifi>=2023.11.17 # Required for HTTPS
+
+# Async support
+asyncio>=3.4.3 
