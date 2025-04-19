@@ -18,4 +18,11 @@ urllib3>=2.1.0   # For URL handling
 certifi>=2023.11.17 # Required for HTTPS
 
 # Async support
-asyncio>=3.4.3 
+asyncio>=3.4.3
+
+# Flask and waitress
+Flask>=3.0.0
+waitress>=2.1.2
+
+# Additional dependencies
+psutil>=5.9.0  # For system metrics 

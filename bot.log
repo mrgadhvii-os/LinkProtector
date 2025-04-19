@@ -1,0 +1,84 @@
+2025-04-20 02:10:30,919 - pyrogram.session.auth - INFO - Start creating a new auth key on DC2
+2025-04-20 02:10:30,921 - pyrogram.connection.connection - INFO - Connecting...
+2025-04-20 02:10:31,115 - pyrogram.connection.connection - INFO - Connected! Production DC2 - IPv4
+2025-04-20 02:10:33,914 - pyrogram.session.auth - INFO - Done auth key exchange: DhGenOk
+2025-04-20 02:10:33,924 - pyrogram.connection.connection - INFO - Disconnected
+2025-04-20 02:10:33,976 - pyrogram.connection.connection - INFO - Connecting...
+2025-04-20 02:10:34,186 - pyrogram.connection.connection - INFO - Connected! Production DC2 - IPv4
+2025-04-20 02:10:34,188 - pyrogram.session.session - INFO - NetworkTask started
+2025-04-20 02:10:35,827 - pyrogram.session.session - INFO - Session initialized: Layer 158
+2025-04-20 02:10:35,842 - pyrogram.session.session - INFO - Device: CPython 3.10.11 - Pyrogram 2.0.106
+2025-04-20 02:10:35,842 - pyrogram.session.session - INFO - System: Windows 10 (en)
+2025-04-20 02:10:35,847 - pyrogram.session.session - INFO - Session started
+2025-04-20 02:10:35,860 - pyrogram.session.session - INFO - PingTask started
+2025-04-20 02:10:36,063 - pyrogram.session.session - INFO - PingTask stopped
+2025-04-20 02:10:36,063 - pyrogram.connection.connection - INFO - Disconnected
+2025-04-20 02:10:36,063 - pyrogram.session.session - INFO - NetworkTask stopped
+2025-04-20 02:10:36,063 - pyrogram.session.session - INFO - Session stopped
+2025-04-20 02:10:36,114 - pyrogram.session.auth - INFO - Start creating a new auth key on DC1
+2025-04-20 02:10:36,117 - pyrogram.connection.connection - INFO - Connecting...
+2025-04-20 02:10:36,541 - pyrogram.connection.connection - INFO - Connected! Production DC1 - IPv4
+2025-04-20 02:10:40,090 - pyrogram.session.auth - INFO - Done auth key exchange: DhGenOk
+2025-04-20 02:10:40,092 - pyrogram.connection.connection - INFO - Disconnected
+2025-04-20 02:10:40,129 - pyrogram.connection.connection - INFO - Connecting...
+2025-04-20 02:10:40,638 - pyrogram.connection.connection - INFO - Connected! Production DC1 - IPv4
+2025-04-20 02:10:40,642 - pyrogram.session.session - INFO - NetworkTask started
+2025-04-20 02:10:42,381 - pyrogram.session.session - INFO - Session initialized: Layer 158
+2025-04-20 02:10:42,382 - pyrogram.session.session - INFO - Device: CPython 3.10.11 - Pyrogram 2.0.106
+2025-04-20 02:10:42,383 - pyrogram.session.session - INFO - System: Windows 10 (en)
+2025-04-20 02:10:42,383 - pyrogram.session.session - INFO - Session started
+2025-04-20 02:10:42,387 - pyrogram.session.session - INFO - PingTask started
+2025-04-20 02:10:43,828 - pyrogram.dispatcher - INFO - Started 8 HandlerTasks
+2025-04-20 02:10:43,830 - __main__ - INFO - Bot started successfully!
+2025-04-20 02:10:44,328 - __main__ - INFO - Bot started as @CoreXUltraBot
+2025-04-20 02:10:44,328 - ChannelBot - INFO - Command logging system initialized
+2025-04-20 02:10:44,331 - __main__ - INFO - Command logging initialized
+2025-04-20 02:10:44,332 - __main__ - INFO - Starting Flask server on port 8080
+2025-04-20 02:10:44,332 - __main__ - INFO - Flask server thread started
+2025-04-20 02:10:44,332 - __main__ - INFO - Health endpoint available at /health
+2025-04-20 02:10:44,332 - __main__ - INFO - Services started
+2025-04-20 02:10:44,337 - __main__ - INFO - Bot is running...
+2025-04-20 02:10:44,337 - ChannelBot - INFO - Command Usage Statistics:
+2025-04-20 02:10:44,342 - ChannelBot - INFO - Total Commands: 0
+2025-04-20 02:10:44,346 - ChannelBot - INFO - Total Callbacks: 0
+2025-04-20 02:10:44,348 - ChannelBot - INFO - Unique Users: 0
+2025-04-20 02:10:44,348 - ChannelBot - INFO - Command Frequency: {}
+2025-04-20 02:10:44,351 - ChannelBot - INFO - Callback Frequency: {}
+2025-04-20 02:10:44,384 - waitress - INFO - Serving on http://0.0.0.0:8080
+2025-04-20 02:11:16,280 - ChannelBot - INFO - Command used: gdv by user 7029363479 (@None)
+2025-04-20 02:12:33,231 - root - INFO - Stop signal received (SIGINT). Exiting...
+2025-04-20 02:12:33,234 - __main__ - INFO - Stopping bot...
+2025-04-20 02:12:33,266 - pyrogram.dispatcher - INFO - Stopped 8 HandlerTasks
+2025-04-20 02:12:33,270 - pyrogram.session.session - INFO - PingTask stopped
+2025-04-20 02:12:33,270 - pyrogram.connection.connection - INFO - Disconnected
+2025-04-20 02:12:33,272 - pyrogram.session.session - INFO - NetworkTask stopped
+2025-04-20 02:12:33,272 - pyrogram.session.session - INFO - Session stopped
+2025-04-20 02:12:33,272 - __main__ - INFO - Bot stopped
+2025-04-20 02:12:39,008 - pyrogram.connection.connection - INFO - Connecting...
+2025-04-20 02:12:39,526 - pyrogram.connection.connection - INFO - Connected! Production DC1 - IPv4
+2025-04-20 02:12:39,531 - pyrogram.session.session - INFO - NetworkTask started
+2025-04-20 02:12:41,743 - pyrogram.session.session - INFO - Session initialized: Layer 158
+2025-04-20 02:12:41,745 - pyrogram.session.session - INFO - Device: CPython 3.10.11 - Pyrogram 2.0.106
+2025-04-20 02:12:41,745 - pyrogram.session.session - INFO - System: Windows 10 (en)
+2025-04-20 02:12:41,745 - pyrogram.session.session - INFO - Session started
+2025-04-20 02:12:41,775 - pyrogram.session.session - INFO - PingTask started
+2025-04-20 02:12:42,713 - pyrogram.dispatcher - INFO - Started 8 HandlerTasks
+2025-04-20 02:12:42,715 - __main__ - INFO - Bot started successfully!
+2025-04-20 02:12:43,310 - __main__ - INFO - Bot started as @CoreXUltraBot
+2025-04-20 02:12:43,316 - ChannelBot - INFO - Command logging system initialized
+2025-04-20 02:12:43,318 - __main__ - INFO - Command logging initialized
+2025-04-20 02:12:43,320 - __main__ - INFO - Starting Flask server on port 8080
+2025-04-20 02:12:43,320 - __main__ - INFO - Flask server thread started
+2025-04-20 02:12:43,324 - __main__ - INFO - Health endpoint available at /health
+2025-04-20 02:12:43,326 - __main__ - INFO - Services started
+2025-04-20 02:12:43,331 - __main__ - INFO - Bot is running...
+2025-04-20 02:12:43,335 - ChannelBot - ERROR - Error logging periodic stats: 'callbacks'
+2025-04-20 02:12:43,353 - waitress - INFO - Serving on http://0.0.0.0:8080
+2025-04-20 02:13:10,262 - root - INFO - Stop signal received (SIGINT). Exiting...
+2025-04-20 02:13:10,265 - __main__ - INFO - Stopping bot...
+2025-04-20 02:13:10,299 - pyrogram.dispatcher - INFO - Stopped 8 HandlerTasks
+2025-04-20 02:13:10,299 - pyrogram.session.session - INFO - PingTask stopped
+2025-04-20 02:13:10,305 - pyrogram.connection.connection - INFO - Disconnected
+2025-04-20 02:13:10,307 - pyrogram.session.session - INFO - NetworkTask stopped
+2025-04-20 02:13:10,307 - pyrogram.session.session - INFO - Session stopped
+2025-04-20 02:13:10,311 - __main__ - INFO - Bot stopped
