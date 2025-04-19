@@ -1,40 +1,9 @@
 {
     "links": {
-        "MTc0NTA4MDczNC05YTJLUmJNbQ==": {
+        "v2-MTc0NTA5NTI3Ni0xNzc2NjMxMjc2LU5FNlhNaW5S": {
             "link": "https://t.me/MrGadhvii",
-            "caption": null,
-            "created_at": 1745080734
-        },
-        "MTc0NTA4MTA0OS14MDJya3pnMQ==": {
-            "link": "https://t.me/+lXCnsxg2rctlNmY1",
-            "caption": null,
-            "created_at": 1745081049
-        },
-        "MTc0NTA4MTQ4My11Z0JJTVk2RQ==": {
-            "link": "https://t.me/yourchannel",
-            "caption": null,
-            "created_at": 1745081483
-        },
-        "MTc0NTA4MTY0NS1ha3dkblZnZQ==": {
-            "link": "https://t.me/+uDEfzMDEOtQ1YWI1",
-            "caption": null,
-            "created_at": 1745081645
-        },
-        "MTc0NTA4NTQ1MC0yOVZXTHJDZg==": {
-            "link": "https://t.me/channel",
-            "created_at": 1745085450
-        },
-        "MTc0NTA4NTg3MS1KNTdvcm5ENg==": {
-            "link": "https://t.me/MrGadhvii",
-            "created_at": 1745085871
-        },
-        "MTc0NTA4NjQ3OC02b1A4NGE0Rw==": {
-            "link": "https://t.me/yourchannel",
-            "created_at": 1745086478
-        },
-        "MTc0NTA4Njc5NC1YOHNieEczYw==": {
-            "link": "https://t.me/+m2zeq2ibHjZiZTJl",
-            "created_at": 1745086794
+            "created_at": 1745095276,
+            "expires_at": 1776631276
         }
     }
 }

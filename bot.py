@@ -19,12 +19,132 @@ import time
 import random
 import string
 import asyncio
-from datetime import datetime
-from aiohttp import web
+from datetime import datetime, timedelta
+from flask import Flask
+import threading
+from waitress import serve
 from helper import log_command, log_callback, setup_command_handlers
 from pyrogram.errors import FloodWait
 from ip import IPChecker
 import socket
+import secrets
+import hashlib
+import logging
+import psutil
+import platform
+
+# Set up logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+# Create Flask app
+flask_app = Flask(__name__)
+
+@flask_app.route('/')
+def home():
+    return 'Hello from MrGadhvii'
+
+@flask_app.route('/health')
+def health():
+    """Detailed health check endpoint"""
+    try:
+        # System info
+        cpu_percent = psutil.cpu_percent(interval=1)
+        memory = psutil.virtual_memory()
+        disk = psutil.disk_usage('/')
+        
+        # Bot uptime
+        uptime = datetime.now() - START_TIME
+        days = uptime.days
+        hours, remainder = divmod(uptime.seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        uptime_str = f"{days}d {hours}h {minutes}m {seconds}s"
+        
+        # Network info
+        net_io = psutil.net_io_counters()
+        bytes_sent = net_io.bytes_sent
+        bytes_recv = net_io.bytes_recv
+        
+        # Bot stats
+        total_users = len(USERS)
+        total_banned = len(ban_manager.banned_users)
+        
+        health_data = {
+            "status": "operational",
+            "owner": "MrGadhvii",
+            "bot_info": {
+                "username": BOT_USERNAME,
+                "uptime": uptime_str,
+                "start_time": START_TIME.strftime("%Y-%m-%d %H:%M:%S"),
+                "total_users": total_users,
+                "banned_users": total_banned,
+                "ping_count": PING_COUNT
+            },
+            "system_info": {
+                "platform": platform.system(),
+                "platform_release": platform.release(),
+                "cpu": {
+                    "usage_percent": round(cpu_percent, 2),
+                    "cores": psutil.cpu_count()
+                },
+                "memory": {
+                    "total": f"{memory.total / (1024**3):.2f} GB",
+                    "used": f"{memory.used / (1024**3):.2f} GB",
+                    "free": f"{memory.free / (1024**3):.2f} GB",
+                    "percent": memory.percent
+                },
+                "disk": {
+                    "total": f"{disk.total / (1024**3):.2f} GB",
+                    "used": f"{disk.used / (1024**3):.2f} GB",
+                    "free": f"{disk.free / (1024**3):.2f} GB",
+                    "percent": disk.percent
+                },
+                "network": {
+                    "bytes_sent": f"{bytes_sent / (1024**2):.2f} MB",
+                    "bytes_received": f"{bytes_recv / (1024**2):.2f} MB"
+                }
+            },
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+        
+        # Format response with indentation for better readability
+        return flask_app.response_class(
+            response=json.dumps(health_data, indent=2),
+            status=200,
+            mimetype='application/json'
+        )
+    except Exception as e:
+        error_response = {
+            "status": "error",
+            "error": str(e),
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+        return flask_app.response_class(
+            response=json.dumps(error_response, indent=2),
+            status=500,
+            mimetype='application/json'
+        )
+
+def run_flask():
+    """Run Flask server"""
+    try:
+        # Force port 8080 for Heroku
+        port = 8080
+        logger.info(f"Starting Flask server on port {port}")
+        logger.info("Health endpoint available at /health")
+        serve(flask_app, host='0.0.0.0', port=port, threads=4)
+    except Exception as e:
+        logger.error(f"Flask server error: {e}", exc_info=True)
+        # Try alternate port if 8080 fails
+        try:
+            port = int(os.environ.get("PORT", 8080))
+            logger.info(f"Retrying Flask server on port {port}")
+            serve(flask_app, host='0.0.0.0', port=port, threads=4)
+        except Exception as e:
+            logger.error(f"Flask server retry failed: {e}", exc_info=True)
 
 # Initialize bot
 app = Client(
@@ -88,44 +208,178 @@ USERS = load_users()
 # Add after bot initialization
 ip_checker = IPChecker()
 
-class UserState:
-    def __init__(self):
-        self.telegram_link = None
-        self.caption = None
-        self.image = None
-        self.waiting_for = None
+# Add this with other global variables
+TOKENS_FILE = 'verification_tokens.json'
 
-def generate_token():
-    """Generate a unique token for the link."""
-    timestamp = str(int(time.time()))
-    random_str = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
-    token = f"{timestamp}-{random_str}"
-    return base64.urlsafe_b64encode(token.encode()).decode()
-
-def save_link(token: str, link: str):
-    """Save link data to JSON file."""
+def generate_verification_token(user_id: int) -> str:
+    """Generate a secure verification token for user"""
     try:
-        with open('links.json', 'r') as f:
-            data = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        data = {"links": {}}
-    
-    data["links"][token] = {
-        "link": link,
-        "created_at": int(time.time())
-    }
-    
-    with open('links.json', 'w') as f:
-        json.dump(data, f, indent=4)
-
-def get_link_data(token: str):
-    """Get link data from JSON file."""
-    try:
-        with open('links.json', 'r') as f:
-            data = json.load(f)
-            return data["links"].get(token)
-    except (FileNotFoundError, json.JSONDecodeError):
+        # Load or create tokens file
+        try:
+            with open(TOKENS_FILE, 'r') as f:
+                tokens = json.load(f)
+        except:
+            tokens = {}
+        
+        # Generate token
+        random_bytes = secrets.token_bytes(16)
+        current_time = int(time.time())
+        token_data = f"{user_id}:{current_time}:{random_bytes.hex()}"
+        token = hashlib.sha256(token_data.encode()).hexdigest()[:32]
+        
+        # Store token
+        tokens[token] = {
+            "user_id": user_id,
+            "expires": current_time + 600  # 10 minutes
+        }
+        
+        # Save tokens
+        with open(TOKENS_FILE, 'w') as f:
+            json.dump(tokens, f)
+        
+        return token
+    except Exception as e:
+        print(f"Token generation error: {e}")
         return None
+
+def verify_token(token: str, user_id: int) -> bool:
+    """Verify a token is valid for user"""
+    try:
+        # Load tokens
+        with open(TOKENS_FILE, 'r') as f:
+            tokens = json.load(f)
+        
+        if token not in tokens:
+            return False
+        
+        token_data = tokens[token]
+        current_time = int(time.time())
+        
+        # Check expiry and user
+        if current_time > token_data["expires"] or token_data["user_id"] != user_id:
+            del tokens[token]
+            with open(TOKENS_FILE, 'w') as f:
+                json.dump(tokens, f)
+            return False
+        
+        # Valid token - remove it
+        del tokens[token]
+        with open(TOKENS_FILE, 'w') as f:
+            json.dump(tokens, f)
+        return True
+        
+    except Exception as e:
+        print(f"Token verification error: {e}")
+        return False
+
+@app.on_message(filters.command("start"))
+async def start_command(client, message: Message):
+    """Handle /start command"""
+    try:
+        user_id = message.from_user.id
+        
+        # If user is banned, reject them
+        if ban_manager.is_banned(user_id):
+            await message.reply(
+                "You are banned from using this bot.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return
+        
+        # Check if this is a verification callback
+        if len(message.command) > 1:
+            token = message.command[1]
+            
+            # Handle GDV links (v2 tokens)
+            if token.startswith('v2-'):
+                link_data = get_link_data(token)
+                if link_data and link_data.get('link'):
+                    # Create WebApp URL with the channel link
+                    webapp_url = f"https://adorable-sfogliatella-26d564.netlify.app/redirect.html?url={quote(link_data['link'])}"
+                    
+                    # Create keyboard with WebApp button
+                    keyboard = InlineKeyboardMarkup([
+                        [InlineKeyboardButton(
+                            "🌟 Join Channel",
+                            web_app=WebAppInfo(url=webapp_url)
+                        )]
+                    ])
+                    
+                    await message.reply(
+                        "🔐 ** Join Selected Channel **\n\n"
+                        "• Click the button below to join\n"
+                        "__Click the button to proceed:__",
+                        reply_markup=keyboard,
+                        parse_mode=ParseMode.MARKDOWN
+                    )
+                    return
+                else:
+                    await message.reply(
+                        "❌ This link has expired or is invalid.\n"
+                        "Please request a new link.",
+                        parse_mode=ParseMode.MARKDOWN
+                    )
+                    return
+            
+            # Handle verification tokens
+            if verify_token(token, user_id):
+                # Add user to verified list
+                ip_verifier.add_verified(user_id)
+                
+                await message.reply(
+                    "✅ **Verified Successfully**\n"
+                    "__Owner: @MrGadhvii__",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                
+                # Show welcome message
+                await send_welcome_message(client, message)
+                return
+            else:
+                await message.reply(
+                    "❌ Invalid or expired verification.\n"
+                    "Please try verifying again.",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                return
+        
+        # If user is already verified, proceed normally
+        if ip_verifier.is_verified(user_id):
+            await send_welcome_message(client, message)
+            return
+        
+        # Generate verification token for new users
+        verification_token = generate_verification_token(user_id)
+        if not verification_token:
+            await message.reply(
+                "⚠️ Error generating verification. Please try again.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return
+            
+        # For new users, show verification WebApp button
+        verify_url = f"https://adorable-sfogliatella-26d564.netlify.app/verify.html?user_id={user_id}&token={verification_token}&bot={BOT_USERNAME}"
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                "🔒 Verify Your Location",
+                web_app=WebAppInfo(url=verify_url)
+            )]
+        ])
+        
+        await message.reply(
+            "🔒 **Human Verification Required**\n\n"
+            "Please click the button below to verify.\n\n"
+            "ℹ️ __You will be redirected to a secure verification page.__",
+            reply_markup=keyboard,
+            parse_mode=ParseMode.MARKDOWN
+        )
+        
+    except Exception as e:
+        print(f"Start command error: {e}")
+        await message.reply(
+            "⚠️ Something went wrong. Please try again.",
+            parse_mode=ParseMode.MARKDOWN
+        )
 
 # Add this function before the command handlers
 async def get_user_ip(message: Message) -> str:
@@ -201,79 +455,64 @@ async def test_command(client, message: Message):
         print(f"Test error: {str(e)}")
         await message.reply("❌ Test failed!")
 
-# Modify the start command
-@app.on_message(filters.command("start"))
-@log_command
-async def start_command(client, message: Message):
-    """Handle /start command"""
+class IPVerifier:
+    def __init__(self):
+        self.verified_file = 'userIP.json'
+        self.verified_users = self.load_verified()
+    
+    def load_verified(self):
+        try:
+            with open(self.verified_file, 'r') as f:
+                data = json.load(f)
+                return set(data.get('verified_users', []))
+        except:
+            return set()
+    
+    def save_verified(self):
+        with open(self.verified_file, 'w') as f:
+            json.dump({'verified_users': list(self.verified_users)}, f)
+    
+    def add_verified(self, user_id: int):
+        self.verified_users.add(user_id)
+        self.save_verified()
+    
+    def is_verified(self, user_id: int) -> bool:
+        return user_id in self.verified_users
+
+    async def check_ip(self, ip: str) -> bool:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f'http://ip-api.com/json/{ip}') as response:
+                    data = await response.json()
+                    return data.get('country') == 'India'
+        except:
+            return False
+
+# Initialize IP verifier
+ip_verifier = IPVerifier()
+
+async def send_welcome_message(client, message):
+    """Send welcome message after verification"""
     try:
-        # Get user's IP and verify
-        user_ip = await get_user_ip(message)
-        is_allowed, ban_message = await ip_checker.verify_user(message.from_user.id, user_ip)
-        
-        if not is_allowed:
-            await message.reply(ban_message)
-            return
-        
-        global BOT_USERNAME
-        if not BOT_USERNAME:
-            me = await client.get_me()
-            BOT_USERNAME = me.username
-        
-        # Check if started with a token
-        if len(message.command) > 1:
-            token = message.command[1]
-            link_data = get_link_data(token)
-            
-            if link_data:
-                # Create WebApp URL
-                webapp_url = f"https://exciting-rat.static.domains/redirect.html?url={quote(link_data['link'])}"
-                
-                keyboard = InlineKeyboardMarkup([
-                    [InlineKeyboardButton(
-                        "🌟 Join Channel",
-                        web_app=WebAppInfo(url=webapp_url)
-                    )]
-                ])
-                
-                await message.reply(
-                    "🎉 *Welcome to Protected Channel Link!*\n\n"
-                    "🔐 Click the button below to join securely:\n\n"
-                    "_This link is protected by our secure system_",
-                    reply_markup=keyboard,
-                    parse_mode=ParseMode.MARKDOWN
-                )
-                return
-        
-        # Modern welcome message with emojis and formatting
         welcome_text = (
             f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"**🎊 Welcome {message.from_user.mention}!**\n"
+            f"🎊 Welcome **{message.from_user.first_name}**!\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n\n"
             f"🤖 I am a **Channel Link Protection Bot**\n"
-            f"I can help you protect your channel links with advanced security.\n\n"
+            f"__ɪ ᴄᴀɴ ʜᴇʟᴘ ʏᴏᴜ ᴘʀᴏᴛᴇᴄᴛ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ʟɪɴᴋꜱ ᴡɪᴛʜ ᴀᴅᴠᴀɴᴄᴇᴅ ꜱᴇᴄᴜʀɪᴛʏ.__\n\n"
             f"**🛠 Available Commands:**\n"
-            f"• `/start` - Start the bot\n"
-            f"• `/gdv` - Generate protected link\n\n"
+            f"• /start - Start the bot\n"
+            f"• /gdv - Generate protected link\n\n"
             f"**🌟 Key Features:**\n"
             f"• 🔒 Advanced Link Protection\n"
             f"• 🚀 Instant Link Generation\n"
-            f"• 🛡️ Anti-Extraction System\n"
-            f"• 📊 Real-time Analytics\n"
-            f"• 🔄 Auto-updating Links\n\n"
-            f"**📝 Example:**\n"
-            f"`/gdv https://t.me/yourchannel`\n\n"
-            f"━━━━━━━━━━━━━━━━━━━━━"
+
         )
         
-        # Create keyboard with developer contact
         keyboard = InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("👨‍💻 Developer", url="https://t.me/MrGadhvii"),
-                InlineKeyboardButton("🔔 Updates", url="https://t.me/TheGadhvii")
-            ],
-            [
-                InlineKeyboardButton("➕ Add to Group", url=f"https://t.me/{BOT_USERNAME}?startgroup=true")
+                InlineKeyboardButton("👨‍💻 𝘿𝙚𝙫𝙚𝙡𝙤𝙥𝙚𝙧", url="https://t.me/MrGadhvii"),
+                InlineKeyboardButton("🔔 𝙐𝙥𝙙𝙖𝙩𝙚𝙨", url="https://t.me/OneNetworkX")
             ]
         ])
         
@@ -285,8 +524,125 @@ async def start_command(client, message: Message):
         )
         
     except Exception as e:
-        print(f"Error in start command: {str(e)}")
-        await message.reply("⚠️ Something went wrong. Please try again.")
+        print(f"Welcome message error: {e}")
+
+@app.on_callback_query(filters.regex("^verify_success_(.+)$"))
+async def verify_success(client, callback_query: CallbackQuery):
+    """Handle successful verification from WebApp"""
+    try:
+        user_id = int(callback_query.data.split('_')[2])
+        
+        # Add user to verified list
+        ip_verifier.add_verified(user_id)
+        
+        # Update message and show welcome
+        await callback_query.message.edit_text(
+            "✅ **Verified Successfully**\n"
+            "__Owner: @MrGadhvii__"
+        )
+        
+        # Send welcome message
+        await send_welcome_message(client, callback_query.message)
+        
+    except Exception as e:
+        print(f"Verification success error: {str(e)}")
+        await callback_query.message.edit_text(
+            "⚠️ Verification process failed. Please try again later."
+        )
+
+@app.on_callback_query(filters.regex("^verify_fail_(.+)$"))
+async def verify_fail(client, callback_query: CallbackQuery):
+    """Handle failed verification from WebApp"""
+    try:
+        user_id = int(callback_query.data.split('_')[2])
+        
+        # Ban user
+        ban_manager.ban_user(user_id)
+        
+        await callback_query.message.edit_text(
+            "❌ Verification Failed!\n\n"
+            "This bot is only available for users from India.\n"
+            "If you think this is a mistake, contact @MrGadhvii"
+        )
+        
+    except Exception as e:
+        print(f"Verification fail error: {str(e)}")
+        await callback_query.message.edit_text(
+            "⚠️ Verification failed. Please contact support."
+        )
+
+# Add these functions after the imports and before the bot initialization
+def generate_token():
+    """Generate a unique token for the link."""
+    try:
+        timestamp = int(time.time())
+        # Token valid for 1 year
+        expiry = timestamp + (365 * 24 * 60 * 60)
+        random_str = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
+        token_data = f"{timestamp}-{expiry}-{random_str}"
+        # Add v2 prefix to distinguish from verification tokens
+        return f"v2-{base64.urlsafe_b64encode(token_data.encode()).decode()}"
+    except Exception as e:
+        logger.error(f"Token generation error: {e}")
+        return None
+
+def save_link(token: str, link: str):
+    """Save link data to JSON file."""
+    try:
+        with open('links.json', 'r') as f:
+            data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        data = {"links": {}}
+    
+    # Parse token to get timestamp and expiry
+    try:
+        # Remove v2 prefix before decoding
+        pure_token = token.replace('v2-', '', 1)
+        token_data = base64.urlsafe_b64decode(pure_token.encode()).decode()
+        timestamp, expiry, _ = token_data.split('-')
+        expiry = int(expiry)
+    except:
+        timestamp = int(time.time())
+        expiry = timestamp + (365 * 24 * 60 * 60)  # 1 year default
+    
+    data["links"][token] = {
+        "link": link,
+        "created_at": int(timestamp),
+        "expires_at": expiry
+    }
+    
+    with open('links.json', 'w') as f:
+        json.dump(data, f, indent=4)
+
+def get_link_data(token: str):
+    """Get link data from JSON file."""
+    try:
+        with open('links.json', 'r') as f:
+            data = json.load(f)
+            link_data = data["links"].get(token)
+            
+            if not link_data:
+                return None
+            
+            # Check if link has expired
+            current_time = int(time.time())
+            if current_time > link_data.get("expires_at", 0):
+                # Remove expired link
+                del data["links"][token]
+                with open('links.json', 'w') as f:
+                    json.dump(data, f, indent=4)
+                return None
+                
+            return link_data
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+
+# Add this function to handle link generation
+async def generate_protected_link(telegram_link: str) -> str:
+    """Generate a protected link with token."""
+    token = generate_token()
+    save_link(token, telegram_link)
+    return token
 
 @app.on_message(filters.command("gdv"))
 @log_command
@@ -294,16 +650,12 @@ async def gdv_command(client, message: Message):
     """Handle /gdv command"""
     try:
         # Verify user access
-        is_allowed, ban_message = await ip_checker.verify_user(message.from_user.id, await get_user_ip(message))
-        
-        if not is_allowed:
-            await message.reply(ban_message)
+        if not ip_verifier.is_verified(message.from_user.id):
+            await message.reply(
+                "❌ Please verify your location first.\n"
+                "Use /start to begin verification."
+            )
             return
-        
-        global BOT_USERNAME
-        if not BOT_USERNAME:
-            me = await client.get_me()
-            BOT_USERNAME = me.username
             
         # Check if command has a link
         if len(message.command) > 1:
@@ -313,17 +665,19 @@ async def gdv_command(client, message: Message):
             if not telegram_link.startswith(('https://t.me/', 'http://t.me/', 't.me/')):
                 await message.reply(
                     "❌ *Please provide a valid Telegram link*\n"
-                    "Example: `/gdv https://t.me/yourchannel`",
+                    "Example: `/gdv https://t.me/mrgadhvii`",
                     parse_mode=ParseMode.MARKDOWN
                 )
                 return
             
             # Generate token and save link
-            token = generate_token()
-            save_link(token, telegram_link)
+            token = await generate_protected_link(telegram_link)
+            if not token:
+                await message.reply("⚠️ Error generating link. Please try again.")
+                return
             
-            # Create shareable link
-            share_link = f"https://t.me/{BOT_USERNAME}?start={token}"
+            # Create shareable link using telegram.dog
+            share_link = f"https://telegram.dog/{BOT_USERNAME}?start={token}"
             
             # Create share button
             keyboard = InlineKeyboardMarkup([
@@ -331,12 +685,10 @@ async def gdv_command(client, message: Message):
             ])
             
             await message.reply(
-                "✅ *Link Generated Successfully!*\n\n"
+                "✅ **Protected Link Generated!**\n\n"
                 f"🔗 Your link: `{share_link}`\n\n"
-                "📝 When users click this link:\n"
-                "1. Bot will start automatically\n"
-                "2. They'll see a secure join button\n"
-                "3. Channel link will be protected\n\n"
+                "📝 **Link Details:**\n"
+                "• Valid for 1 year\n"
                 "🔄 Use the button below to share",
                 reply_markup=keyboard,
                 parse_mode=ParseMode.MARKDOWN
@@ -345,11 +697,11 @@ async def gdv_command(client, message: Message):
         else:
             await message.reply(
                 "❌ *Please provide a Telegram link*\n"
-                "Example: `/gdv https://t.me/yourchannel`",
+                "Example: `/gdv https://t.me/mrgadhvii`",
                 parse_mode=ParseMode.MARKDOWN
             )
     except Exception as e:
-        print(f"Error in gdv command: {str(e)}")
+        logger.error(f"Error in gdv command: {str(e)}")
         await message.reply("⚠️ Something went wrong. Please try again.")
 
 async def shorten_url(url: str) -> str:
@@ -382,13 +734,13 @@ async def create_share_button(telegram_link: str, caption: str = None) -> str:
         short_url = bot_link
     
     # Create share text
-    share_text = f"🔐 *Protected Channel Link*\n\n"
+    share_text = f"🔐 **Protected Channel Link**\n\n"
     
     if caption:
         share_text += f"{caption}\n\n"
     
-    share_text += f"🔗 *Join here:* {short_url}\n\n"
-    share_text += "_Secured by @" + BOT_USERNAME + "_"
+    share_text += f"🔗 **Join here:** {short_url}\n\n"
+    share_text += "__Secured by @" + BOT_USERNAME + "__"
     
     return share_text
 
@@ -481,9 +833,9 @@ async def handle_photo(client, message: Message):
         else:
             # If user sends photo without context
             await message.reply(
-                "❓ Would you like to create a protected link?\n"
+                "❓ ​🇼​​🇴​​🇺​​🇱​​🇩​ ​🇾​​🇴​​🇺​ ​🇱​​🇮​​🇰​​🇪​ ​🇹​​🇴​ ​🇨​​🇷​​🇪​​🇦​​🇹​​🇪​ ​🇦​ ​🇵​​🇷​​🇴​​🇹​​🇪​​🇨​​🇹​​🇪​​🇩​ ​🇱​​🇮​​🇳​​🇰 ​?\n"
                 "Use /gdv command followed by your channel link.\n\n"
-                "Example: `/gdv https://t.me/yourchannel`",
+                "Example: `/gdv https://t.me/mrgadhvii`",
                 parse_mode=ParseMode.MARKDOWN
             )
     except Exception as e:
@@ -577,15 +929,15 @@ async def handle_callback(client, callback_query: CallbackQuery):
                 await callback_query.answer("Loading channel info...")
                 
                 # Create the WebApp URL with the channel link
-                webapp_url = f"https://exciting-rat.static.domains/redirect.html?url={quote(channel['link'])}"
+                webapp_url = f"https://adorable-sfogliatella-26d564.netlify.app/redirect.html?url={quote(channel['link'])}"
                 
                 # Create keyboard with WebApp button
                 keyboard = InlineKeyboardMarkup([
                     [InlineKeyboardButton(
-                        "🌟 Join Channel",
+                        "🌟 𝙅𝙤𝙞𝙣 𝘾𝙝𝙖𝙣𝙣𝙚𝙡",
                         web_app=WebAppInfo(url=webapp_url)
                     )],
-                    [InlineKeyboardButton("« Back to Channels", callback_data="back")]
+                    [InlineKeyboardButton("« 𝘽𝙖𝙘𝙠 𝘽𝙚𝙛𝙤𝙧𝙚", callback_data="back")]
                 ])
                 
                 channel_text = (
@@ -609,12 +961,12 @@ async def handle_callback(client, callback_query: CallbackQuery):
                 "🔥 **Premium Channels Directory**\n"
                 "━━━━━━━━━━━━━━━━━━━━━\n\n"
                 "**Select any channel below to join:**\n"
-                "_All links are protected and secure_ 🔒\n\n"
+                "__All links are protected and secure__ 🔒\n\n"
                 "**Features:**\n"
-                "• Instant Access 🚀\n"
-                "• Premium Content ⭐\n"
-                "• Daily Updates 📢\n"
-                "• Exclusive Benefits 🎁"
+                "• 𝙸𝚗𝚜𝚝𝚊𝚗𝚝 𝙰𝚌𝚌𝚎𝚜𝚜 🚀\n"
+                "• 𝙿𝚛𝚎𝚖𝚒𝚞𝚖 𝙲𝚘𝚗𝚝𝚎𝚗𝚝 ⭐\n"
+                "• 𝙳𝚊𝚒𝚕𝚢 𝚄𝚙𝚍𝚊𝚝𝚎𝚜 📢\n"
+                "• 𝙴𝚡𝚌𝚕𝚞𝚜𝚒𝚟𝚎 𝙱𝚎𝚗𝚎𝚒𝚝𝚜 🎁"
             )
             
             await callback_query.message.edit_text(
@@ -989,7 +1341,7 @@ async def unban_command(client, message: Message):
 async def send_ping():
     """Send ping message to admin."""
     global PING_COUNT
-    ADMIN_ID = 7029363479
+    ADMIN_ID = 0000000000
     
     while True:
         try:
@@ -1037,50 +1389,56 @@ async def send_ping():
         
         await asyncio.sleep(60)
 
-async def start_webserver():
-    """Start web server for Heroku."""
-    if os.environ.get("DYNO"):
-        web_app = web.Application()
-        web_app.router.add_get("/", lambda r: web.Response(text="Bot is running!"))
-        runner = web.AppRunner(web_app)
-        await runner.setup()
-        port = int(os.environ.get("PORT", 8080))
-        await web.TCPSite(runner, "0.0.0.0", port).start()
-        print(f"Web server started on port {port}")
+async def shutdown(signal, loop):
+    """Clean shutdown of the bot"""
+    logger.info(f'Stop signal received ({signal.name}). Exiting...')
+    
+    tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+    [task.cancel() for task in tasks]
+    
+    logger.info(f'Cancelling {len(tasks)} outstanding tasks')
+    await asyncio.gather(*tasks, return_exceptions=True)
+    loop.stop()
 
 async def main():
-    """Main function to run the bot."""
+    """Main function to run the bot"""
     try:
         # Start the bot
         await app.start()
-        print("Bot started successfully!")
+        logger.info("Bot started successfully!")
         
         # Get bot info
         me = await app.get_me()
         global BOT_USERNAME
         BOT_USERNAME = me.username
-        print(f"Bot started as @{BOT_USERNAME}")
+        logger.info(f"Bot started as @{BOT_USERNAME}")
         
         # Initialize command logging
         setup_command_handlers(app)
-        print("Command logging initialized")
+        logger.info("Command logging initialized")
         
-        # Start web server if on Heroku
-        if os.environ.get("DYNO"):
-            await start_webserver()
+        # Start Flask server in a separate thread
+        flask_thread = threading.Thread(target=run_flask, daemon=True)
+        flask_thread.start()
+        logger.info("Flask server thread started")
         
         # Start ping service
         asyncio.create_task(send_ping())
-        print("Services started")
-        print("Bot is running...")
+        logger.info("Services started")
+        logger.info("Bot is running...")
         
-        # Keep the bot running using imported idle function
         await idle()
         
     except Exception as e:
-        print(f"Error: {str(e)}")
+        logger.error(f"Error in main: {e}", exc_info=True)
     finally:
+        logger.info("Stopping bot...")
         await app.stop()
 
 if __name__ == "__main__":
-    app.run(main()) 
+    try:
+        app.run(main())
+    except Exception as e:
+        logger.error(f"Fatal error: {e}", exc_info=True)
+    finally:
+        logger.info("Bot stopped")
