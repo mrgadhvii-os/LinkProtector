@@ -336,16 +336,12 @@ async def start_command(client, message: Message):
             logger.error(f"Error adding user to database: {e}")
         
         # If user is banned, reject them
-        try:
-            is_banned = await banned_collection.find_one({'user_id': user_id}) is not None
-            if is_banned:
-                await message.reply(
-                    "You are banned from using this bot.",
-                    parse_mode=ParseMode.MARKDOWN
-                )
-                return
-        except Exception as e:
-            logger.error(f"Error checking ban status: {e}")
+        if ip_checker.is_user_banned(user_id):
+            await message.reply(
+                "🚫 You are banned from using this bot.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return
         
         # Check if this is a verification callback
         if len(message.command) > 1:
@@ -419,31 +415,53 @@ async def start_command(client, message: Message):
             await send_welcome_message(client, message)
             return
         
-        # Generate verification token for new users
-        verification_token = generate_verification_token(user_id)
-        if not verification_token:
+        # For new users only: Check location and generate verification token
+        try:
+            user_ip = await get_user_ip(message)
+            is_indian, country = await ip_checker.check_ip(user_ip)
+            
+            if not is_indian:
+                # Ban user if not from India
+                ip_checker.banned_users.add(user_id)
+                ip_checker._save_banned_users()
+                await message.reply(
+                    f"🚫 This bot is only available for users from India.\nYour country: {country}",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                return
+            
+            # Generate verification token for Indian users
+            verification_token = generate_verification_token(user_id)
+            if not verification_token:
+                await message.reply(
+                    "⚠️ Error generating verification. Please try again.",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                return
+                
+            # Show verification WebApp button
+            verify_url = f"https://adorable-sfogliatella-26d564.netlify.app/verify.html?user_id={user_id}&token={verification_token}&bot={BOT_USERNAME}"
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "🔒 Verify Your Location",
+                    web_app=WebAppInfo(url=verify_url)
+                )]
+            ])
+            
             await message.reply(
-                "⚠️ Error generating verification. Please try again.",
+                "🔒 **Human Verification Required**\n\n"
+                "Please click the button below to verify.\n\n"
+                "ℹ️ __You will be redirected to a secure verification page.__",
+                reply_markup=keyboard,
                 parse_mode=ParseMode.MARKDOWN
             )
-            return
             
-        # For new users, show verification WebApp button
-        verify_url = f"https://adorable-sfogliatella-26d564.netlify.app/verify.html?user_id={user_id}&token={verification_token}&bot={BOT_USERNAME}"
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton(
-                "🔒 Verify Your Location",
-                web_app=WebAppInfo(url=verify_url)
-            )]
-        ])
-        
-        await message.reply(
-            "🔒 **Human Verification Required**\n\n"
-            "Please click the button below to verify.\n\n"
-            "ℹ️ __You will be redirected to a secure verification page.__",
-            reply_markup=keyboard,
-            parse_mode=ParseMode.MARKDOWN
-        )
+        except Exception as e:
+            logger.error(f"Error in location verification: {e}")
+            await message.reply(
+                "⚠️ Error verifying location. Please try again later.",
+                parse_mode=ParseMode.MARKDOWN
+            )
         
     except Exception as e:
         logger.error(f"Start command error: {e}")
@@ -685,11 +703,22 @@ async def generate_protected_link(telegram_link: str) -> str:
 async def gdv_command(client, message: Message):
     """Handle /gdv command"""
     try:
-        # Verify user access
-        if not ip_checker.is_verified(message.from_user.id):
+        user_id = message.from_user.id
+        
+        # Check if user is banned
+        if ip_checker.is_user_banned(user_id):
+            await message.reply(
+                "🚫 You are banned from using this bot.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return
+            
+        # Check if user is verified
+        if not ip_checker.is_verified(user_id):
             await message.reply(
                 "❌ Please verify your location first.\n"
-                "Use /start to begin verification."
+                "Use /start to begin verification.",
+                parse_mode=ParseMode.MARKDOWN
             )
             return
             
@@ -827,15 +856,24 @@ def create_channel_keyboard():
 async def handle_caption(client, message: Message):
     """Handle caption input"""
     try:
-        # Verify user access
-        if not ip_checker.is_verified(message.from_user.id):
+        user_id = message.from_user.id
+        
+        # Check if user is banned
+        if ip_checker.is_user_banned(user_id):
+            await message.reply(
+                "🚫 You are banned from using this bot.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return
+            
+        # Check if user is verified
+        if not ip_checker.is_verified(user_id):
             await message.reply(
                 "❌ Please verify your location first.\n"
                 "Use /start to begin verification."
             )
             return
         
-        user_id = message.from_user.id
         if user_id in user_states and user_states[user_id].waiting_for == "caption":
             user_states[user_id].caption = message.text
             
@@ -883,15 +921,24 @@ async def handle_caption(client, message: Message):
 async def handle_photo(client, message: Message):
     """Handle photo upload"""
     try:
-        # Verify user access
-        if not ip_checker.is_verified(message.from_user.id):
+        user_id = message.from_user.id
+        
+        # Check if user is banned
+        if ip_checker.is_user_banned(user_id):
+            await message.reply(
+                "🚫 You are banned from using this bot.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return
+            
+        # Check if user is verified
+        if not ip_checker.is_verified(user_id):
             await message.reply(
                 "❌ Please verify your location first.\n"
                 "Use /start to begin verification."
             )
             return
         
-        user_id = message.from_user.id
         if user_id in user_states and user_states[user_id].waiting_for == "image":
             # Save image file_id
             user_states[user_id].image = message.photo.file_id
@@ -913,14 +960,6 @@ async def handle_photo(client, message: Message):
 async def create_final_post(client, message: Message, user_id: int):
     """Create the final post with image and caption"""
     try:
-        # Verify user access
-        if not ip_checker.is_verified(user_id):
-            await message.reply(
-                "❌ Please verify your location first.\n"
-                "Use /start to begin verification."
-            )
-            return
-        
         state = user_states[user_id]
         share_text = await create_share_button(state.telegram_link, state.caption)
         
@@ -963,15 +1002,19 @@ async def create_final_post(client, message: Message, user_id: int):
 async def handle_callback(client, callback_query: CallbackQuery):
     """Handle callback queries"""
     try:
-        # Verify user access
-        is_allowed, ban_message = await ip_checker.verify_user(callback_query.from_user.id, await get_user_ip(callback_query.message))
+        user_id = callback_query.from_user.id
         
-        if not is_allowed:
-            await callback_query.answer(ban_message)
+        # Check if user is banned
+        if ip_checker.is_user_banned(user_id):
+            await callback_query.answer("🚫 You are banned from using this bot.", show_alert=True)
+            return
+            
+        # Check if user is verified
+        if not ip_checker.is_verified(user_id):
+            await callback_query.answer("❌ Please verify your location first. Use /start to begin verification.", show_alert=True)
             return
         
         data = callback_query.data
-        user_id = callback_query.from_user.id
         
         if data == "add_image":
             await callback_query.message.reply(
