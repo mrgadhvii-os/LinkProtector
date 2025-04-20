@@ -189,7 +189,7 @@ def run_flask():
 
 # Initialize bot
 app = Client(
-    "channel_link_bot",
+    "LinkProtectorXv2",
     api_id=API_ID,
     api_hash=API_HASH,
     bot_token=BOT_TOKEN
