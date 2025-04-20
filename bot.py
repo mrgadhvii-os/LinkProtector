@@ -350,7 +350,7 @@ async def start_command(client, message: Message):
             # Handle GDV links (v2 tokens)
             if token.startswith('v2-'):
                 try:
-                    link_data = await links_collection.find_one({'token': token})
+                    link_data = get_link_data(token)
                     if link_data and link_data.get('link'):
                         link = link_data['link']
                         # Check if it's a Telegram link
@@ -415,53 +415,31 @@ async def start_command(client, message: Message):
             await send_welcome_message(client, message)
             return
         
-        # For new users only: Check location and generate verification token
-        try:
-            user_ip = await get_user_ip(message)
-            is_indian, country = await ip_checker.check_ip(user_ip)
-            
-            if not is_indian:
-                # Ban user if not from India
-                ip_checker.banned_users.add(user_id)
-                ip_checker._save_banned_users()
-                await message.reply(
-                    f"🚫 This bot is only available for users from India.\nYour country: {country}",
-                    parse_mode=ParseMode.MARKDOWN
-                )
-                return
-            
-            # Generate verification token for Indian users
-            verification_token = generate_verification_token(user_id)
-            if not verification_token:
-                await message.reply(
-                    "⚠️ Error generating verification. Please try again.",
-                    parse_mode=ParseMode.MARKDOWN
-                )
-                return
-                
-            # Show verification WebApp button
-            verify_url = f"https://adorable-sfogliatella-26d564.netlify.app/verify.html?user_id={user_id}&token={verification_token}&bot={BOT_USERNAME}"
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton(
-                    "🔒 Verify Your Location",
-                    web_app=WebAppInfo(url=verify_url)
-                )]
-            ])
-            
+        # For new users only: Show verification button
+        verification_token = generate_verification_token(user_id)
+        if not verification_token:
             await message.reply(
-                "🔒 **Human Verification Required**\n\n"
-                "Please click the button below to verify.\n\n"
-                "ℹ️ __You will be redirected to a secure verification page.__",
-                reply_markup=keyboard,
+                "⚠️ Error generating verification. Please try again.",
                 parse_mode=ParseMode.MARKDOWN
             )
+            return
             
-        except Exception as e:
-            logger.error(f"Error in location verification: {e}")
-            await message.reply(
-                "⚠️ Error verifying location. Please try again later.",
-                parse_mode=ParseMode.MARKDOWN
-            )
+        # Show verification WebApp button
+        verify_url = f"https://adorable-sfogliatella-26d564.netlify.app/verify.html?user_id={user_id}&token={verification_token}&bot={BOT_USERNAME}"
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                "🔒 Verify Your Location",
+                web_app=WebAppInfo(url=verify_url)
+            )]
+        ])
+        
+        await message.reply(
+            "🔒 **Human Verification Required**\n\n"
+            "Please click the button below to verify.\n\n"
+            "ℹ️ __You will be redirected to a secure verification page.__",
+            reply_markup=keyboard,
+            parse_mode=ParseMode.MARKDOWN
+        )
         
     except Exception as e:
         logger.error(f"Start command error: {e}")
@@ -705,7 +683,7 @@ async def gdv_command(client, message: Message):
     try:
         user_id = message.from_user.id
         
-        # Check if user is banned
+        # Check if user is banned using ip_checker
         if ip_checker.is_user_banned(user_id):
             await message.reply(
                 "🚫 You are banned from using this bot.",
@@ -713,7 +691,7 @@ async def gdv_command(client, message: Message):
             )
             return
             
-        # Check if user is verified
+        # Check if user is verified using ip_checker
         if not ip_checker.is_verified(user_id):
             await message.reply(
                 "❌ Please verify your location first.\n"
@@ -741,23 +719,8 @@ async def gdv_command(client, message: Message):
                     await message.reply("⚠️ Error generating link. Please try again.")
                     return
                 
-                # Save link to database
-                try:
-                    await links_collection.update_one(
-                        {'token': token},
-                        {
-                            '$set': {
-                                'link': url,
-                                'created_at': int(time.time()),
-                                'expires_at': int(time.time()) + (365 * 24 * 60 * 60)  # 1 year
-                            }
-                        },
-                        upsert=True
-                    )
-                except Exception as e:
-                    logger.error(f"Error saving link to database: {e}")
-                    await message.reply("⚠️ Error saving link. Please try again.")
-                    return
+                # Save link using save_link function
+                save_link(token, url)
                 
                 # Create shareable link using telegram.dog
                 share_link = f"https://telegram.dog/{BOT_USERNAME}?start={token}"
