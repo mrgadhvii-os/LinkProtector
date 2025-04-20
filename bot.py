@@ -189,7 +189,7 @@ def run_flask():
 
 # Initialize bot
 app = Client(
-    "LinkProtectorXBot",
+    "channel_link_bot",
     api_id=API_ID,
     api_hash=API_HASH,
     bot_token=BOT_TOKEN
@@ -349,6 +349,39 @@ async def start_command(client, message: Message):
             
             # Handle GDV links (v2 tokens)
             if token.startswith('v2-'):
+                # First check if user is verified
+                if not ip_checker.is_verified(user_id):
+                    # Store the token in user state for after verification
+                    if not hasattr(app, 'pending_links'):
+                        app.pending_links = {}
+                    app.pending_links[user_id] = token
+                    
+                    # Show verification button
+                    verification_token = generate_verification_token(user_id)
+                    if not verification_token:
+                        await message.reply(
+                            "⚠️ Error generating verification. Please try again.",
+                            parse_mode=ParseMode.MARKDOWN
+                        )
+                        return
+                    
+                    verify_url = f"https://adorable-sfogliatella-26d564.netlify.app/verify.html?user_id={user_id}&token={verification_token}&bot={BOT_USERNAME}"
+                    keyboard = InlineKeyboardMarkup([
+                        [InlineKeyboardButton(
+                            "🔒 Verify Your Location",
+                            web_app=WebAppInfo(url=verify_url)
+                        )]
+                    ])
+                    
+                    await message.reply(
+                        "🔒 **Verification Required**\n\n"
+                        "To access this protected link, please verify your location first.\n\n"
+                        "ℹ️ __Click the button below to verify:__",
+                        reply_markup=keyboard,
+                        parse_mode=ParseMode.MARKDOWN
+                    )
+                    return
+                
                 try:
                     link_data = get_link_data(token)
                     if link_data and link_data.get('link'):
@@ -566,14 +599,51 @@ async def verify_success(client, callback_query: CallbackQuery):
         # Add user to verified list
         ip_checker.add_verified_user(user_id)
         
-        # Update message and show welcome
+        # Update message
         await callback_query.message.edit_text(
             "✅ **Verified Successfully**\n"
-            "__Owner: @MrGadhvii__"
+            "__Owner: @MrGadhvii__",
+            parse_mode=ParseMode.MARKDOWN
         )
         
-        # Send welcome message
-        await send_welcome_message(client, callback_query.message)
+        # Check if there was a pending protected link
+        if hasattr(app, 'pending_links') and user_id in app.pending_links:
+            token = app.pending_links[user_id]
+            del app.pending_links[user_id]
+            
+            # Process the protected link
+            try:
+                link_data = get_link_data(token)
+                if link_data and link_data.get('link'):
+                    link = link_data['link']
+                    # Check if it's a Telegram link
+                    if 't.me/' in link.lower() or 'telegram.me/' in link.lower():
+                        # For Telegram links, use redirect
+                        webapp_url = f"https://adorable-sfogliatella-26d564.netlify.app/redirect.html?url={quote(link)}"
+                    else:
+                        # For non-Telegram links, open directly
+                        webapp_url = link
+                    
+                    # Create keyboard with WebApp button
+                    keyboard = InlineKeyboardMarkup([
+                        [InlineKeyboardButton(
+                            "🌟 𝙊𝙥𝙚𝙣 𝙇𝙞𝙣𝙠",
+                            web_app=WebAppInfo(url=webapp_url)
+                        )]
+                    ])
+                    
+                    await callback_query.message.reply(
+                        "🔐 **Protected Link**\n\n"
+                        "• Click the button below to proceed\n"
+                        "__Click the button to continue:__",
+                        reply_markup=keyboard,
+                        parse_mode=ParseMode.MARKDOWN
+                    )
+            except Exception as e:
+                logger.error(f"Error processing pending link: {e}")
+        else:
+            # Send regular welcome message
+            await send_welcome_message(client, callback_query.message)
         
     except Exception as e:
         logger.error(f"Verification success error: {str(e)}")
