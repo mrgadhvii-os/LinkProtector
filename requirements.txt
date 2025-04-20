@@ -25,4 +25,5 @@ Flask>=3.0.0
 waitress>=2.1.2
 
 # Additional dependencies
-psutil>=5.9.0  # For system metrics 
+psutil>=5.9.0  # For system metrics
+motor>=3.3.2  # MongoDB async driver 

@@ -9,11 +9,12 @@ from pyrogram.types import (
 )
 from pyrogram.enums import ParseMode
 from pyrogram.handlers import MessageHandler
-from config import API_ID, API_HASH, BOT_TOKEN
+from config import API_ID, API_HASH, BOT_TOKEN, MONGO_URL
+import motor.motor_asyncio
 import aiohttp
 import json
 import re
-from urllib.parse import quote
+from urllib.parse import quote, quote_plus, urlparse
 import base64
 import time
 import random
@@ -39,6 +40,46 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+# MongoDB Setup
+try:
+    # Parse MongoDB URL and encode username/password
+    parsed_url = urlparse(MONGO_URL)
+    if parsed_url.username and parsed_url.password:
+        encoded_username = quote_plus(parsed_url.username)
+        encoded_password = quote_plus(parsed_url.password)
+        encoded_url = MONGO_URL.replace(
+            f"{parsed_url.username}:{parsed_url.password}",
+            f"{encoded_username}:{encoded_password}"
+        )
+    else:
+        encoded_url = MONGO_URL
+
+    mongo_client = motor.motor_asyncio.AsyncIOMotorClient(encoded_url)
+    db = mongo_client.linkprotector  # database name
+    
+    # Define collections
+    links_collection = db.links  # for protected links
+    users_collection = db.users  # for user tracking
+    verified_collection = db.verified  # for verified users
+    banned_collection = db.banned  # for banned users
+    stats_collection = db.stats  # for bot statistics
+    
+    # Create indexes
+    async def create_indexes():
+        await links_collection.create_index("token", unique=True)
+        await users_collection.create_index("user_id", unique=True)
+        await verified_collection.create_index("user_id", unique=True)
+        await banned_collection.create_index("user_id", unique=True)
+    
+    # Run index creation
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(create_indexes())
+    
+    logger.info("MongoDB connected successfully!")
+except Exception as e:
+    logger.error(f"MongoDB connection failed: {e}")
+    raise SystemExit("Could not connect to MongoDB. Exiting...")
 
 # Create Flask app
 flask_app = Flask(__name__)
@@ -70,7 +111,7 @@ def health():
         
         # Bot stats
         total_users = len(USERS)
-        total_banned = len(ban_manager.banned_users)
+        total_banned = len(ip_checker.banned_users)
         
         health_data = {
             "status": "operational",
@@ -205,7 +246,7 @@ def save_users(users):
 # Initialize users set
 USERS = load_users()
 
-# Add after bot initialization
+# Initialize IP checker
 ip_checker = IPChecker()
 
 # Add this with other global variables
@@ -278,13 +319,33 @@ async def start_command(client, message: Message):
     try:
         user_id = message.from_user.id
         
-        # If user is banned, reject them
-        if ban_manager.is_banned(user_id):
-            await message.reply(
-                "You are banned from using this bot.",
-                parse_mode=ParseMode.MARKDOWN
+        # Add user to database
+        try:
+            await users_collection.update_one(
+                {'user_id': user_id},
+                {
+                    '$set': {
+                        'user_id': user_id,
+                        'username': message.from_user.username,
+                        'joined_at': datetime.now()
+                    }
+                },
+                upsert=True
             )
-            return
+        except Exception as e:
+            logger.error(f"Error adding user to database: {e}")
+        
+        # If user is banned, reject them
+        try:
+            is_banned = await banned_collection.find_one({'user_id': user_id}) is not None
+            if is_banned:
+                await message.reply(
+                    "You are banned from using this bot.",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                return
+        except Exception as e:
+            logger.error(f"Error checking ban status: {e}")
         
         # Check if this is a verification callback
         if len(message.command) > 1:
@@ -292,39 +353,49 @@ async def start_command(client, message: Message):
             
             # Handle GDV links (v2 tokens)
             if token.startswith('v2-'):
-                link_data = get_link_data(token)
-                if link_data and link_data.get('link'):
-                    # Create WebApp URL with the channel link
-                    webapp_url = f"https://adorable-sfogliatella-26d564.netlify.app/redirect.html?url={quote(link_data['link'])}"
-                    
-                    # Create keyboard with WebApp button
-                    keyboard = InlineKeyboardMarkup([
-                        [InlineKeyboardButton(
-                            "🌟 Join Channel",
-                            web_app=WebAppInfo(url=webapp_url)
-                        )]
-                    ])
-                    
-                    await message.reply(
-                        "🔐 ** Join Selected Channel **\n\n"
-                        "• Click the button below to join\n"
-                        "__Click the button to proceed:__",
-                        reply_markup=keyboard,
-                        parse_mode=ParseMode.MARKDOWN
-                    )
-                    return
-                else:
-                    await message.reply(
-                        "❌ This link has expired or is invalid.\n"
-                        "Please request a new link.",
-                        parse_mode=ParseMode.MARKDOWN
-                    )
+                try:
+                    link_data = await links_collection.find_one({'token': token})
+                    if link_data and link_data.get('link'):
+                        link = link_data['link']
+                        # Check if it's a Telegram link
+                        if 't.me/' in link.lower() or 'telegram.me/' in link.lower():
+                            # For Telegram links, use redirect
+                            webapp_url = f"https://adorable-sfogliatella-26d564.netlify.app/redirect.html?url={quote(link)}"
+                        else:
+                            # For non-Telegram links, open directly
+                            webapp_url = link
+                        
+                        # Create keyboard with WebApp button
+                        keyboard = InlineKeyboardMarkup([
+                            [InlineKeyboardButton(
+                                "🌟 𝙊𝙥𝙚𝙣 𝙇𝙞𝙣𝙠",
+                                web_app=WebAppInfo(url=webapp_url)
+                            )]
+                        ])
+                        
+                        await message.reply(
+                            "🔐 **Protected Link**\n\n"
+                            "• Click the button below to proceed\n"
+                            "__Click the button to continue:__",
+                            reply_markup=keyboard,
+                            parse_mode=ParseMode.MARKDOWN
+                        )
+                        return
+                    else:
+                        await message.reply(
+                            "❌ This link has expired or is invalid.\n"
+                            "Please request a new link.",
+                            parse_mode=ParseMode.MARKDOWN
+                        )
+                        return
+                except Exception as e:
+                    logger.error(f"Error handling GDV link: {e}")
                     return
             
             # Handle verification tokens
             if verify_token(token, user_id):
                 # Add user to verified list
-                ip_verifier.add_verified(user_id)
+                ip_checker.add_verified_user(user_id)
                 
                 await message.reply(
                     "✅ **Verified Successfully**\n"
@@ -341,10 +412,10 @@ async def start_command(client, message: Message):
                     "Please try verifying again.",
                     parse_mode=ParseMode.MARKDOWN
                 )
-                return
+            return
         
         # If user is already verified, proceed normally
-        if ip_verifier.is_verified(user_id):
+        if ip_checker.is_verified(user_id):
             await send_welcome_message(client, message)
             return
         
@@ -375,7 +446,7 @@ async def start_command(client, message: Message):
         )
         
     except Exception as e:
-        print(f"Start command error: {e}")
+        logger.error(f"Start command error: {e}")
         await message.reply(
             "⚠️ Something went wrong. Please try again.",
             parse_mode=ParseMode.MARKDOWN
@@ -424,7 +495,7 @@ async def myip_command(client, message: Message):
         if is_allowed:
             ip_text += "✅ **Status:** You are allowed to use this bot!"
         else:
-            ip_text += "🚫 **Status:** You are not allowed to use this bot (India only)"
+            ip_text += "🚫 **Status:** You are not allowed to use this bot."
         
         await message.reply(
             ip_text,
@@ -454,42 +525,6 @@ async def test_command(client, message: Message):
     except Exception as e:
         print(f"Test error: {str(e)}")
         await message.reply("❌ Test failed!")
-
-class IPVerifier:
-    def __init__(self):
-        self.verified_file = 'userIP.json'
-        self.verified_users = self.load_verified()
-    
-    def load_verified(self):
-        try:
-            with open(self.verified_file, 'r') as f:
-                data = json.load(f)
-                return set(data.get('verified_users', []))
-        except:
-            return set()
-    
-    def save_verified(self):
-        with open(self.verified_file, 'w') as f:
-            json.dump({'verified_users': list(self.verified_users)}, f)
-    
-    def add_verified(self, user_id: int):
-        self.verified_users.add(user_id)
-        self.save_verified()
-    
-    def is_verified(self, user_id: int) -> bool:
-        return user_id in self.verified_users
-
-    async def check_ip(self, ip: str) -> bool:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(f'http://ip-api.com/json/{ip}') as response:
-                    data = await response.json()
-                    return data.get('country') == 'India'
-        except:
-            return False
-
-# Initialize IP verifier
-ip_verifier = IPVerifier()
 
 async def send_welcome_message(client, message):
     """Send welcome message after verification"""
@@ -533,7 +568,7 @@ async def verify_success(client, callback_query: CallbackQuery):
         user_id = int(callback_query.data.split('_')[2])
         
         # Add user to verified list
-        ip_verifier.add_verified(user_id)
+        ip_checker.add_verified_user(user_id)
         
         # Update message and show welcome
         await callback_query.message.edit_text(
@@ -545,7 +580,7 @@ async def verify_success(client, callback_query: CallbackQuery):
         await send_welcome_message(client, callback_query.message)
         
     except Exception as e:
-        print(f"Verification success error: {str(e)}")
+        logger.error(f"Verification success error: {str(e)}")
         await callback_query.message.edit_text(
             "⚠️ Verification process failed. Please try again later."
         )
@@ -557,7 +592,8 @@ async def verify_fail(client, callback_query: CallbackQuery):
         user_id = int(callback_query.data.split('_')[2])
         
         # Ban user
-        ban_manager.ban_user(user_id)
+        ip_checker.banned_users.add(user_id)
+        ip_checker._save_banned_users()
         
         await callback_query.message.edit_text(
             "❌ Verification Failed!\n\n"
@@ -566,7 +602,7 @@ async def verify_fail(client, callback_query: CallbackQuery):
         )
         
     except Exception as e:
-        print(f"Verification fail error: {str(e)}")
+        logger.error(f"Verification fail error: {str(e)}")
         await callback_query.message.edit_text(
             "⚠️ Verification failed. Please contact support."
         )
@@ -650,7 +686,7 @@ async def gdv_command(client, message: Message):
     """Handle /gdv command"""
     try:
         # Verify user access
-        if not ip_verifier.is_verified(message.from_user.id):
+        if not ip_checker.is_verified(message.from_user.id):
             await message.reply(
                 "❌ Please verify your location first.\n"
                 "Use /start to begin verification."
@@ -659,45 +695,75 @@ async def gdv_command(client, message: Message):
             
         # Check if command has a link
         if len(message.command) > 1:
-            telegram_link = message.command[1]
+            url = message.command[1]
             
-            # Validate and clean the link
-            if not telegram_link.startswith(('https://t.me/', 'http://t.me/', 't.me/')):
+            # Basic URL validation
+            if not url.startswith(('http://', 'https://')):
+                url = 'https://' + url
+            
+            try:
+                # Additional URL validation could be added here
+                if len(url) < 4:  # Simple length check
+                    raise ValueError("Invalid URL")
+                    
+                # Generate token and save link
+                token = generate_token()
+                if not token:
+                    await message.reply("⚠️ Error generating link. Please try again.")
+                    return
+                
+                # Save link to database
+                try:
+                    await links_collection.update_one(
+                        {'token': token},
+                        {
+                            '$set': {
+                                'link': url,
+                                'created_at': int(time.time()),
+                                'expires_at': int(time.time()) + (365 * 24 * 60 * 60)  # 1 year
+                            }
+                        },
+                        upsert=True
+                    )
+                except Exception as e:
+                    logger.error(f"Error saving link to database: {e}")
+                    await message.reply("⚠️ Error saving link. Please try again.")
+                    return
+                
+                # Create shareable link using telegram.dog
+                share_link = f"https://telegram.dog/{BOT_USERNAME}?start={token}"
+                
+                # Create share button
+                keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔄 Share Link", url=f"https://t.me/share/url?url={quote(share_link)}")]
+                ])
+                
+                # Check if it's a Telegram link
+                is_telegram_link = 't.me/' in url.lower() or 'telegram.me/' in url.lower()
+                
                 await message.reply(
-                    "❌ *Please provide a valid Telegram link*\n"
-                    "Example: `/gdv https://t.me/mrgadhvii`",
+                    "✅ **Protected Link Generated!**\n\n"
+                    f"🔗 Your link: `{share_link}`\n\n"
+                    "📝 **Link Details:**\n"
+                    "• Valid for 1 year\n"
+                    f"• Type: {'Telegram Channel/Group' if is_telegram_link else 'External Website'}\n"
+                    "🔄 Use the button below to share",
+                    reply_markup=keyboard,
                     parse_mode=ParseMode.MARKDOWN
                 )
-                return
-            
-            # Generate token and save link
-            token = await generate_protected_link(telegram_link)
-            if not token:
-                await message.reply("⚠️ Error generating link. Please try again.")
-                return
-            
-            # Create shareable link using telegram.dog
-            share_link = f"https://telegram.dog/{BOT_USERNAME}?start={token}"
-            
-            # Create share button
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔄 Share Link", url=f"https://t.me/share/url?url={quote(share_link)}")]
-            ])
-            
-            await message.reply(
-                "✅ **Protected Link Generated!**\n\n"
-                f"🔗 Your link: `{share_link}`\n\n"
-                "📝 **Link Details:**\n"
-                "• Valid for 1 year\n"
-                "🔄 Use the button below to share",
-                reply_markup=keyboard,
-                parse_mode=ParseMode.MARKDOWN
-            )
-            
+                
+            except Exception as e:
+                await message.reply(
+                    "❌ **Invalid URL Format**\n"
+                    "Example: `/gdv https://example.com` or\n"
+                    "Example: `/gdv t.me/mrgadhvii`",
+                    parse_mode=ParseMode.MARKDOWN
+                )
         else:
             await message.reply(
-                "❌ *Please provide a Telegram link*\n"
-                "Example: `/gdv https://t.me/mrgadhvii`",
+                "❌ **Please provide a URL to protect**\n"
+                "Example: `/gdv https://example.com` or\n"
+                "Example: `/gdv t.me/mrgadhvii`",
                 parse_mode=ParseMode.MARKDOWN
             )
     except Exception as e:
@@ -762,10 +828,11 @@ async def handle_caption(client, message: Message):
     """Handle caption input"""
     try:
         # Verify user access
-        is_allowed, ban_message = await ip_checker.verify_user(message.from_user.id, await get_user_ip(message))
-        
-        if not is_allowed:
-            await message.reply(ban_message)
+        if not ip_checker.is_verified(message.from_user.id):
+            await message.reply(
+                "❌ Please verify your location first.\n"
+                "Use /start to begin verification."
+            )
             return
         
         user_id = message.from_user.id
@@ -808,7 +875,7 @@ async def handle_caption(client, message: Message):
                 parse_mode=ParseMode.MARKDOWN
             )
     except Exception as e:
-        print(f"Message handling error: {str(e)}")
+        logger.error(f"Message handling error: {str(e)}")
         # Don't send error message to user for regular messages
 
 @app.on_message(filters.photo & filters.private)
@@ -817,10 +884,11 @@ async def handle_photo(client, message: Message):
     """Handle photo upload"""
     try:
         # Verify user access
-        is_allowed, ban_message = await ip_checker.verify_user(message.from_user.id, await get_user_ip(message))
-        
-        if not is_allowed:
-            await message.reply(ban_message)
+        if not ip_checker.is_verified(message.from_user.id):
+            await message.reply(
+                "❌ Please verify your location first.\n"
+                "Use /start to begin verification."
+            )
             return
         
         user_id = message.from_user.id
@@ -835,21 +903,22 @@ async def handle_photo(client, message: Message):
             await message.reply(
                 "❓ ​🇼​​🇴​​🇺​​🇱​​🇩​ ​🇾​​🇴​​🇺​ ​🇱​​🇮​​🇰​​🇪​ ​🇹​​🇴​ ​🇨​​🇷​​🇪​​🇦​​🇹​​🇪​ ​🇦​ ​🇵​​🇷​​🇴​​🇹​​🇪​​🇨​​🇹​​🇪​​🇩​ ​🇱​​🇮​​🇳​​🇰 ​?\n"
                 "Use /gdv command followed by your channel link.\n\n"
-                "Example: `/gdv https://t.me/mrgadhvii`",
+                "Example: `/gdv https://example.com`",
                 parse_mode=ParseMode.MARKDOWN
             )
     except Exception as e:
-        print(f"Error handling photo: {str(e)}")
+        logger.error(f"Error handling photo: {str(e)}")
         await message.reply("⚠️ Something went wrong. Please try again.")
 
 async def create_final_post(client, message: Message, user_id: int):
     """Create the final post with image and caption"""
     try:
         # Verify user access
-        is_allowed, ban_message = await ip_checker.verify_user(user_id, await get_user_ip(message))
-        
-        if not is_allowed:
-            await message.reply(ban_message)
+        if not ip_checker.is_verified(user_id):
+            await message.reply(
+                "❌ Please verify your location first.\n"
+                "Use /start to begin verification."
+            )
             return
         
         state = user_states[user_id]
@@ -886,7 +955,7 @@ async def create_final_post(client, message: Message, user_id: int):
         # Clear user state
         del user_states[user_id]
     except Exception as e:
-        print(f"Error creating final post: {str(e)}")
+        logger.error(f"Error creating final post: {str(e)}")
         await message.reply("⚠️ Something went wrong. Please try again.")
 
 @app.on_callback_query()
@@ -928,8 +997,13 @@ async def handle_callback(client, callback_query: CallbackQuery):
                 # First acknowledge the callback
                 await callback_query.answer("Loading channel info...")
                 
-                # Create the WebApp URL with the channel link
-                webapp_url = f"https://adorable-sfogliatella-26d564.netlify.app/redirect.html?url={quote(channel['link'])}"
+                # Check if it's a Telegram link
+                if 't.me/' in channel['link'].lower() or 'telegram.me/' in channel['link'].lower():
+                    # For Telegram links, use redirect
+                    webapp_url = f"https://adorable-sfogliatella-26d564.netlify.app/redirect.html?url={quote(channel['link'])}"
+                else:
+                    # For non-Telegram links, open directly
+                    webapp_url = channel['link']
                 
                 # Create keyboard with WebApp button
                 keyboard = InlineKeyboardMarkup([
@@ -952,7 +1026,7 @@ async def handle_callback(client, callback_query: CallbackQuery):
                     parse_mode=ParseMode.MARKDOWN
                 )
             except Exception as e:
-                print(f"Error in channel handling: {str(e)}")
+                logger.error(f"Error in channel handling: {str(e)}")
                 await callback_query.answer("Error displaying channel info. Please try again.", show_alert=True)
                 
         elif data == "back":
@@ -1249,41 +1323,6 @@ async def ip_stats_command(client, message: Message):
         print(f"Stats error: {str(e)}")
         await message.reply("⚠️ Error getting statistics.")
 
-class BanManager:
-    def __init__(self):
-        self.ban_file = 'user_bans.json'
-        self.banned_users = self.load_bans()
-    
-    def load_bans(self):
-        try:
-            with open(self.ban_file, 'r') as f:
-                data = json.load(f)
-                return set(data.get('banned_users', []))
-        except:
-            return set()
-    
-    def save_bans(self):
-        with open(self.ban_file, 'w') as f:
-            json.dump({'banned_users': list(self.banned_users)}, f)
-    
-    def ban_user(self, user_id: int) -> bool:
-        self.banned_users.add(user_id)
-        self.save_bans()
-        return True
-    
-    def unban_user(self, user_id: int) -> bool:
-        if user_id in self.banned_users:
-            self.banned_users.remove(user_id)
-            self.save_bans()
-            return True
-        return False
-    
-    def is_banned(self, user_id: int) -> bool:
-        return user_id in self.banned_users
-
-# Initialize ban manager
-ban_manager = BanManager()
-
 @app.on_message(filters.command("ban"))
 async def ban_command(client, message: Message):
     """Ban a user command"""
@@ -1304,7 +1343,8 @@ async def ban_command(client, message: Message):
             return
         
         # Ban user
-        ban_manager.ban_user(user_id)
+        ip_checker.banned_users.add(user_id)
+        ip_checker._save_banned_users()
         await message.reply(f"Banned user: {user_id}")
         
     except Exception as e:
@@ -1330,7 +1370,9 @@ async def unban_command(client, message: Message):
             return
         
         # Unban user
-        if ban_manager.unban_user(user_id):
+        if user_id in ip_checker.banned_users:
+            ip_checker.banned_users.remove(user_id)
+            ip_checker._save_banned_users()
             await message.reply(f"Unbanned user: {user_id}")
         else:
             await message.reply(f"User {user_id} is not banned")

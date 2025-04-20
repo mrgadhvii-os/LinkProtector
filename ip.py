@@ -19,7 +19,9 @@ logger = logging.getLogger('IPChecker')
 class IPChecker:
     def __init__(self):
         self.banned_users_file = 'userBAN.json'
+        self.verified_users_file = 'userIP.json'
         self.banned_users: Set[int] = self._load_banned_users()
+        self.verified_users: Set[int] = self._load_verified_users()
         self.user_cache: Dict[int, Dict] = {}  # Cache user checks to reduce API calls
         
     def _load_banned_users(self) -> Set[int]:
@@ -31,10 +33,24 @@ class IPChecker:
         except (FileNotFoundError, json.JSONDecodeError):
             return set()
     
+    def _load_verified_users(self) -> Set[int]:
+        """Load verified users from JSON file"""
+        try:
+            with open(self.verified_users_file, 'r') as f:
+                data = json.load(f)
+                return set(data.get('verified_users', []))
+        except (FileNotFoundError, json.JSONDecodeError):
+            return set()
+    
     def _save_banned_users(self):
         """Save banned users to JSON file"""
         with open(self.banned_users_file, 'w') as f:
             json.dump({'userban': list(self.banned_users)}, f, indent=4)
+    
+    def _save_verified_users(self):
+        """Save verified users to JSON file"""
+        with open(self.verified_users_file, 'w') as f:
+            json.dump({'verified_users': list(self.verified_users)}, f, indent=4)
     
     async def get_ip_info(self, ip: str) -> Dict:
         """
@@ -85,6 +101,15 @@ class IPChecker:
     def is_user_banned(self, user_id: int) -> bool:
         """Check if user is banned"""
         return user_id in self.banned_users
+    
+    def is_verified(self, user_id: int) -> bool:
+        """Check if user is verified"""
+        return user_id in self.verified_users
+    
+    def add_verified_user(self, user_id: int):
+        """Add user to verified users"""
+        self.verified_users.add(user_id)
+        self._save_verified_users()
     
     async def verify_user(self, user_id: int, ip: str) -> Tuple[bool, Optional[str]]:
         """
